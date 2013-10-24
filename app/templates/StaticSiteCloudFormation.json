@@ -1,0 +1,348 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+
+    "Description" : "Create a STTI specific formation of awesomness",
+
+    "Parameters" : {
+        "JiraKey" : {
+            "Type" : "String",
+            "Description" : "The Jira Project Key",
+            "MinLength" : "1",
+            "MaxLength" : "30"
+        },
+        "HostedZone" : {
+            "Type" : "String",
+            "Description" : "The DNS name of an existing Amazon Route 53 hosted zone"
+        },
+        "DevDomain" : {
+            "Type" : "String",
+            "Description" : "The FQDN for the Development site."
+        },
+        "TestDomain" : {
+            "Type" : "String",
+            "Description" : "The FQDN for the Test site."
+        },
+        "ProdDomain" : {
+            "Type" : "String",
+            "Description" : "The FQDN for the Production site."
+        }
+    },
+
+
+    "Resources" : { 
+
+        "CFNUser" : {
+            "Type" : "AWS::IAM::User",
+            "Properties" : {
+                "LoginProfile": {
+                    "Password": { "Fn::Join" : [ "_", [ {"Ref" : "JiraKey"}, "Guy" ]] }
+                },
+                "Path": { "Fn::Join" : [ "/", ["","Deployer", {"Ref" : "JiraKey"},"" ] ]}
+            }
+        },
+
+        "CFNKeys" : {
+            "Type" : "AWS::IAM::AccessKey",
+            "Properties" : {
+                "UserName" : { "Ref": "CFNUser" }
+            }
+        },
+
+        "S3BucketForDevelopmentWebsiteContent" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+                "AccessControl" : "PublicRead",
+                "WebsiteConfiguration" : {
+                    "IndexDocument" : "index.html",
+                    "ErrorDocument" : "error.html"
+                },
+                "Tags": [{"Key":"JiraKey", "Value": {"Ref":"JiraKey"}},{"Key":"Environment", "Value":"Development"}]
+            }
+        },
+
+        "DevelopmentBucketPolicy" : {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "PolicyDocument": {
+                    "Id"           : "Grant access to all account users",
+                    "Statement"    : [{
+                        "Sid"        : "GetObjectAccess",
+                        "Action"     : ["s3:GetObject"],
+                        "Effect"     : "Allow",
+                        "Resource"   : { "Fn::Join" : ["", ["arn:aws:s3:::", {"Ref" : "S3BucketForDevelopmentWebsiteContent" } ,"/*"]]},
+                        "Principal"  : { "AWS": "*"}
+                    }]
+                },
+                "Bucket" : {"Ref" : "S3BucketForDevelopmentWebsiteContent" }
+            }
+        },
+
+        "DevelopmentDistribution" : {
+            "Type" : "AWS::CloudFront::Distribution",
+            "Properties" : {
+                "DistributionConfig" : {
+                    "Origins" : [ {
+                        "DomainName": { "Fn::GetAtt" : [ "S3BucketForDevelopmentWebsiteContent", "DomainName" ] },
+                        "Id" : { "Fn::Join" : [ "-", ["Development", {"Ref" : "JiraKey"} ]] },
+                        "S3OriginConfig" : {
+                            "OriginAccessIdentity" : ""
+                        }
+                    }],
+                    "DefaultCacheBehavior" : {
+                        "TargetOriginId" : { "Fn::Join" : [ "-", ["Development", {"Ref" : "JiraKey"} ]] },
+                        "ForwardedValues" : {
+                            "QueryString" : "false"
+                        },
+                        "ViewerProtocolPolicy" : "allow-all"
+                    },
+                    "Enabled" : "true",
+                    "DefaultRootObject" : "index.html",
+                    "Aliases" : [ {"Ref" : "DevDomain" } ]
+                }   
+            }
+        },
+
+        "DevelopmentDNSName" : {
+            "Type" : "AWS::Route53::RecordSet",
+            "Properties" : {
+                "HostedZoneName" : { "Fn::Join" : [ "", [{ "Ref" : "HostedZone" }, "."]]},
+                "Comment" : "CNAME redirect custom name to CloudFront distribution",
+                "Name" : { "Ref" : "DevDomain" },
+                "Type" : "CNAME",
+                "TTL" : "900",
+                "ResourceRecords" : [{ "Fn::Join" : [ "", ["http://", {"Fn::GetAtt" : ["DevelopmentDistribution", "DomainName"]} ]]}]
+            }
+        },
+
+        "S3BucketForTestWebsiteContent" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+                "AccessControl" : "PublicRead",
+                "WebsiteConfiguration" : {
+                    "IndexDocument" : "index.html",
+                    "ErrorDocument" : "error.html"
+                },
+                "Tags": [{"Key":"JiraKey", "Value": {"Ref":"JiraKey"}},{"Key":"Environment", "Value":"Test"}]
+            }
+        },
+
+        "TestBucketPolicy" : {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "PolicyDocument": {
+                    "Id"           : "Grant access to all account users",
+                    "Statement"    : [{
+                        "Sid"        : "GetObjectAccess",
+                        "Action"     : ["s3:GetObject"],
+                        "Effect"     : "Allow",
+                        "Resource"   : { "Fn::Join" : ["", ["arn:aws:s3:::", {"Ref" :  "S3BucketForTestWebsiteContent" } ,"/*"]]},
+                        "Principal"  : { "AWS": "*"}
+                    }]
+                },
+                "Bucket" : {"Ref" : "S3BucketForTestWebsiteContent" }
+            }
+        },
+
+        "TestDistribution" : {
+            "Type" : "AWS::CloudFront::Distribution",
+            "Properties" : {
+                "DistributionConfig" : {
+                    "Origins" : [ {
+                        "DomainName": { "Fn::GetAtt" : [ "S3BucketForTestWebsiteContent", "DomainName" ] },
+                        "Id" : { "Fn::Join" : [ "-", ["Test", {"Ref" : "JiraKey"} ]] },
+                        "S3OriginConfig" : {
+                            "OriginAccessIdentity" : ""
+                        }
+                    }],
+                    "DefaultCacheBehavior" : {
+                        "TargetOriginId" : { "Fn::Join" : [ "-", ["Test", {"Ref" : "JiraKey"} ]] },
+                        "ForwardedValues" : {
+                            "QueryString" : "false"
+                        },
+                        "ViewerProtocolPolicy" : "allow-all"
+                    },
+                    "Enabled" : "true",
+                    "DefaultRootObject" : "index.html",
+                    "Aliases" : [ {"Ref" : "TestDomain"} ]
+                }
+            }
+        },
+
+        "TestDNSName" : {
+            "Type" : "AWS::Route53::RecordSet",
+            "Properties" : {
+                "HostedZoneName" : { "Fn::Join" : [ "", [{ "Ref" : "HostedZone" }, "."]]},
+                "Comment" : "CNAME redirect custom name to CloudFront distribution",
+                "Name" : { "Ref" : "TestDomain"},
+                "Type" : "CNAME",
+                "TTL" : "900",
+                "ResourceRecords" : [{ "Fn::Join" : [ "", ["http://", {"Fn::GetAtt" : ["TestDistribution", "DomainName"]} ]]}]
+            }
+        },
+
+        "S3BucketForProductionWebsiteContent" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+                "AccessControl" : "PublicRead",
+                "WebsiteConfiguration" : {
+                    "IndexDocument" : "index.html",
+                    "ErrorDocument" : "error.html"
+                },
+                "Tags": [{"Key":"JiraKey", "Value": {"Ref":"JiraKey"}},{"Key":"Environment", "Value":"Production"}]
+            }
+        },
+
+        "ProductionBucketPolicy" : {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "PolicyDocument": {
+                    "Id"           : "Grant access to all account users",
+                    "Statement"    : [{
+                        "Sid"        : "GetObjectAccess",
+                        "Action"     : ["s3:GetObject"],
+                        "Effect"     : "Allow",
+                        "Resource"   : { "Fn::Join" : ["", ["arn:aws:s3:::", {"Ref" :  "S3BucketForProductionWebsiteContent" } , "/*"]]},
+                        "Principal"  : { "AWS": "*"}
+                    }]
+                },
+                "Bucket" : {"Ref" : "S3BucketForProductionWebsiteContent" }
+            }
+        },
+
+        "ProductionDistribution" : {
+            "Type" : "AWS::CloudFront::Distribution",
+            "Properties" : {
+                "DistributionConfig" : {
+                    "Origins" : [ {
+                        "DomainName": { "Fn::GetAtt" : [ "S3BucketForProductionWebsiteContent", "DomainName" ] },
+                        "Id" : { "Fn::Join" : [ "-", ["Production", {"Ref" : "JiraKey"} ]] },
+                        "S3OriginConfig" : {
+                            "OriginAccessIdentity" : ""
+                        }
+                    }],
+                    "DefaultCacheBehavior" : {
+                        "TargetOriginId" : { "Fn::Join" : [ "-", ["Production", {"Ref" : "JiraKey"} ]] },
+                        "ForwardedValues" : {
+                            "QueryString" : "false"
+                        },
+                        "ViewerProtocolPolicy" : "allow-all"
+                    },
+
+                    "Enabled" : "true",
+                    "DefaultRootObject" : "index.html",
+                    "Aliases" : [ {"Ref" : "ProdDomain"} ]
+                } 
+            }
+        },
+
+        "ProductionDNSName" : {
+            "Type" : "AWS::Route53::RecordSet",
+            "Properties" : {
+                "HostedZoneName" : { "Fn::Join" : [ "", [{ "Ref" : "HostedZone" }, "."]]},
+                "Comment" : "CNAME redirect custom name to CloudFront distribution",
+                "Name" : { "Ref" : "ProdDomain" },
+                "Type" : "CNAME",
+                "TTL" : "900",
+                "ResourceRecords" : [{ "Fn::Join" : [ "", ["http://", {"Fn::GetAtt" : ["ProductionDistribution", "DomainName"]} ]]}]
+            }
+        },
+
+        "IAMAccess": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyDocument" : {
+                    "Statement": [   
+                        {
+                        "Action": [
+                            "s3:*"
+                        ],
+                        "Effect": "Allow",
+                        "Resource": [
+                            {"Fn::Join":["",["arn:aws:s3:::",{ "Ref" : "S3BucketForProductionWebsiteContent" }]]},
+                            {"Fn::Join":["",["arn:aws:s3:::",{ "Ref" : "S3BucketForProductionWebsiteContent" },"/*"]]},
+                            {"Fn::Join":["",["arn:aws:s3:::",{ "Ref" : "S3BucketForTestWebsiteContent" }]]},
+                            {"Fn::Join":["",["arn:aws:s3:::",{ "Ref" : "S3BucketForTestWebsiteContent" },"/*"]]},
+                            {"Fn::Join":["",["arn:aws:s3:::",{ "Ref" : "S3BucketForDevelopmentWebsiteContent" }]]},
+                            {"Fn::Join":["",["arn:aws:s3:::",{ "Ref" : "S3BucketForDevelopmentWebsiteContent" },"/*"]]}
+                        ]
+                    },
+                    {
+                        "Action": [
+                            "cloudfront:CreateInvalidation",
+                            "cloudfront:GetInvalidation",
+                            "cloudfront:ListInvalidations"
+                        ],
+                        "Effect": "Allow",
+                        "Resource": "*"
+                    }
+                    ]
+                },
+                "PolicyName" : "S3ProductionAccess",
+                "Users" : [ {"Ref": "CFNUser"} ]
+            }
+        }   
+    },
+
+    "Outputs" : {
+        "AccessKey" : {
+            "Value" : { "Ref" : "CFNKeys" },
+            "Description" : "AWSAccessKeyId of new user"
+        },
+        "SecretKey" : {
+            "Value" : { "Fn::GetAtt" : ["CFNKeys", "SecretAccessKey"]},
+            "Description" : "AWSSecretKey of new user"
+        },
+        "Development" : {
+            "Value" : {"Fn::Join" : [ "  ",
+                [
+                    "Bucket Name:",
+                    { "Ref" : "S3BucketForDevelopmentWebsiteContent" },
+                    "Bucket URL:", 
+                    { "Fn::GetAtt" : [ "S3BucketForDevelopmentWebsiteContent", "WebsiteURL" ] },
+                    "DistributionId:",
+                    { "Ref" : "DevelopmentDistribution" },
+                    "DistributionURL:",
+                    { "Fn::GetAtt" : [ "DevelopmentDistribution", "DomainName" ] },
+                    "Site URL:",
+                    { "Ref" : "DevelopmentDNSName" }
+                ]
+            ]},
+            "Description" : "S3 Bucket Name, S3 Bucket Site URL, Distribution ID, Distribution URL, Site Url"
+        },
+        "Test" : {
+            "Value" : {"Fn::Join" : [ "  ",
+                [
+                    "Bucket Name:",
+                    { "Ref" : "S3BucketForTestWebsiteContent" },
+                    "Bucket URL:", 
+                    { "Fn::GetAtt" : [ "S3BucketForTestWebsiteContent", "WebsiteURL" ] },
+                    "DistributionId:",
+                    { "Ref" : "TestDistribution" },
+                    "DistributionURL:",
+                    { "Fn::GetAtt" : [ "TestDistribution", "DomainName" ] },
+                    "Site URL:",
+                    { "Ref" : "TestDNSName" }
+                ]
+            ]},
+            "Description" : "S3 Bucket Name, S3 Bucket Site URL, Distribution ID, Distribution URL, Site Url"
+        },
+        "Production" : {
+            "Value" : {"Fn::Join" : [ "  ",
+                [
+                    "Bucket Name:",
+                    { "Ref" : "S3BucketForProductionWebsiteContent" },
+                    "Bucket URL:", 
+                    { "Fn::GetAtt" : [ "S3BucketForProductionWebsiteContent", "WebsiteURL" ] },
+                    "DistributionId:",
+                    { "Ref" : "ProductionDistribution" },
+                    "DistributionURL:",
+                    { "Fn::GetAtt" : [ "ProductionDistribution", "DomainName" ] },
+                    "Site URL:",
+                    { "Ref" : "ProductionDNSName" }
+                ]
+            ]},
+            "Description" : "S3 Bucket Name, S3 Bucket Site URL, Distribution ID, Distribution URL, Site Url"
+        }
+    }
+}
+

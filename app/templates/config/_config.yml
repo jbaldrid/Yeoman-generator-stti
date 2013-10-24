@@ -1,0 +1,4 @@
+name: "<%= _.slugify(appname) %>"
+markdown: redcarpet
+pygments: false 
+keep_files: ['bower_components']
